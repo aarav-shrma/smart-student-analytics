@@ -67,6 +67,22 @@ export default function StudentRoster({ students }: { students: StudentRow[] }) 
                 <td className={`py-3 ${s.trend < -1 ? 'text-red-600' : s.trend > 1 ? 'text-emerald-600' : 'text-gray-500'}`}>
                   {s.trend > 0 ? '+' : ''}{s.trend.toFixed(1)}
                 </td>
+                <td className="py-3">
+  {s.predictedGrade != null ? (
+    <div className="flex items-center gap-2">
+      <span className="font-semibold">{s.predictedGrade.toFixed(1)}%</span>
+      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+        s.riskLabel === 'high' ? 'bg-red-100 text-red-700' :
+        s.riskLabel === 'medium' ? 'bg-amber-100 text-amber-700' :
+        'bg-emerald-100 text-emerald-700'
+      }`}>
+        {s.riskLabel}
+      </span>
+    </div>
+  ) : (
+    <span className="text-gray-400 text-xs">—</span>
+  )}
+</td>
               </tr>
             ))}
           </tbody>

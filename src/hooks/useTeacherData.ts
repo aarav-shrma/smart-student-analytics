@@ -17,7 +17,10 @@ export type StudentRow = {
   attendanceRate: number;
   assignmentsGraded: number;
   assignmentsTotal: number;
-  trend: number; // slope: positive = improving, negative = declining
+  trend: number;
+  predictedGrade: number | null;
+  riskLabel: 'low' | 'medium' | 'high' | null;
+  confidence: number | null;
 };
 
 export type CourseInsights = {
@@ -37,7 +40,6 @@ function toLetter(pct: number): string {
   return 'F';
 }
 
-// Simple linear regression slope of scores over time (indexed 0..n-1)
 function computeTrend(scores: number[]): number {
   if (scores.length < 2) return 0;
   const n = scores.length;
@@ -69,7 +71,6 @@ export function useTeacherCourses(teacherId: string | undefined) {
           .eq('teacher_id', teacherId);
         if (cErr) throw cErr;
 
-        // Count students per course
         const withCounts: TeacherCourse[] = [];
         for (const c of courseRows || []) {
           const { count } = await supabase
@@ -136,7 +137,7 @@ export function useCourseInsights(courseId: string | undefined) {
         const studentIds = enrollments.map((e) => e.student_id);
         const enrollmentIds = enrollments.map((e) => e.id);
 
-        // 3. All submissions for these students on these assignments
+        // 3. Submissions
         const { data: submissions, error: sErr } = await supabase
           .from('submissions')
           .select('assignment_id, student_id, score')
@@ -144,24 +145,44 @@ export function useCourseInsights(courseId: string | undefined) {
           .in('assignment_id', assignmentIds);
         if (sErr) throw sErr;
 
-        // 4. Attendance — paginated to bypass 1000-row PostgREST limit
-const attendance: { enrollment_id: string; status: string }[] = [];
-const PAGE_SIZE = 1000;
-let from = 0;
-while (true) {
-  const { data: batch, error: attErr } = await supabase
-    .from('attendance')
-    .select('enrollment_id, status')
-    .in('enrollment_id', enrollmentIds)
-    .range(from, from + PAGE_SIZE - 1);
-  if (attErr) throw attErr;
-  if (!batch || batch.length === 0) break;
-  attendance.push(...batch);
-  if (batch.length < PAGE_SIZE) break;
-  from += PAGE_SIZE;
-}
+        // 4. Attendance — paginated
+        const attendance: { enrollment_id: string; status: string }[] = [];
+        const PAGE_SIZE = 1000;
+        let from = 0;
+        while (true) {
+          const { data: batch, error: attErr } = await supabase
+            .from('attendance')
+            .select('enrollment_id, status')
+            .in('enrollment_id', enrollmentIds)
+            .range(from, from + PAGE_SIZE - 1);
+          if (attErr) throw attErr;
+          if (!batch || batch.length === 0) break;
+          attendance.push(...batch);
+          if (batch.length < PAGE_SIZE) break;
+          from += PAGE_SIZE;
+        }
 
-        // Build a per-student score-by-assignment map (in due_at order)
+        // 4b. Predictions for this course
+        const { data: predictionRows, error: pErr } = await supabase
+          .from('predictions')
+          .select('student_id, predicted_grade, risk_label, confidence')
+          .eq('course_id', courseId);
+        if (pErr) throw pErr;
+        const predictionsByStudent = new Map(
+          (predictionRows || []).map((p) => [p.student_id, p])
+        );
+
+        console.log('[useCourseInsights] fetched:', {
+          enrollments: enrollments.length,
+          assignments: (assignments || []).length,
+          submissions: (submissions || []).length,
+          attendance: attendance.length,
+          predictions: predictionRows?.length ?? 0,
+        });
+
+        if (cancelled) return;
+
+        // Build per-student score map
         const submissionsMap = new Map<string, Map<string, number>>();
         for (const s of submissions || []) {
           if (!submissionsMap.has(s.student_id)) submissionsMap.set(s.student_id, new Map());
@@ -170,7 +191,7 @@ while (true) {
 
         // Attendance per enrollment
         const attMap = new Map<string, { present: number; total: number }>();
-        for (const a of attendance || []) {
+        for (const a of attendance) {
           const b = attMap.get(a.enrollment_id) ?? { present: 0, total: 0 };
           b.total += 1;
           if (a.status === 'present' || a.status === 'late') b.present += 1;
@@ -197,6 +218,7 @@ while (true) {
           const trend = computeTrend(scores);
 
           const profile = enr.profiles as unknown as { full_name: string };
+          const prediction = predictionsByStudent.get(enr.student_id);
           return {
             student_id: enr.student_id,
             full_name: profile?.full_name ?? 'Unknown',
@@ -206,10 +228,13 @@ while (true) {
             assignmentsGraded: graded,
             assignmentsTotal: (assignments || []).length,
             trend: Math.round(trend * 100) / 100,
+            predictedGrade: prediction ? Number(prediction.predicted_grade) : null,
+            riskLabel: prediction ? (prediction.risk_label as 'low' | 'medium' | 'high') : null,
+            confidence: prediction ? Number(prediction.confidence) : null,
           };
         });
 
-        // Distribution histogram
+        // Distribution
         const buckets = [
           { bucket: 'F (0–59)', min: 0, max: 60 },
           { bucket: 'D (60–69)', min: 60, max: 70 },
@@ -226,6 +251,12 @@ while (true) {
         const averageAttendance = students.reduce((s, x) => s + x.attendanceRate, 0) / students.length;
         const atRiskCount = students.filter((s) => s.weightedAverage < 60 || s.trend < -3).length;
 
+        console.log('[useCourseInsights] setting insights:', {
+          studentsCount: students.length,
+          classAverage,
+          averageAttendance,
+        });
+
         if (!cancelled) setInsights({
           courseId: courseId!,
           students,
@@ -235,6 +266,7 @@ while (true) {
           averageAttendance: Math.round(averageAttendance * 10) / 10,
         });
       } catch (err: any) {
+        console.error('[useCourseInsights] error:', err);
         if (!cancelled) setError(err.message);
       } finally {
         if (!cancelled) setLoading(false);
@@ -246,4 +278,16 @@ while (true) {
   }, [courseId]);
 
   return { insights, loading, error };
+}
+
+export async function refreshPredictions(courseId: string): Promise<{
+  ok: boolean;
+  predictionsWritten: number;
+  summary?: { high: number; medium: number; low: number };
+}> {
+  const { data, error } = await supabase.functions.invoke('predict', {
+    body: { courseId },
+  });
+  if (error) throw error;
+  return data;
 }

@@ -111,7 +111,6 @@ export function useCourseInsights(courseId: string | undefined) {
       setError(null);
 
       try {
-        // 1. Enrollments (with student profile) for this course
         const { data: enrollments, error: eErr } = await supabase
           .from('enrollments')
           .select('id, student_id, profiles(full_name)')
@@ -125,7 +124,6 @@ export function useCourseInsights(courseId: string | undefined) {
           return;
         }
 
-        // 2. Assignments for this course
         const { data: assignments, error: aErr } = await supabase
           .from('assignments')
           .select('id, weight, max_score, due_at')
@@ -137,7 +135,6 @@ export function useCourseInsights(courseId: string | undefined) {
         const studentIds = enrollments.map((e) => e.student_id);
         const enrollmentIds = enrollments.map((e) => e.id);
 
-        // 3. Submissions
         const { data: submissions, error: sErr } = await supabase
           .from('submissions')
           .select('assignment_id, student_id, score')
@@ -145,7 +142,6 @@ export function useCourseInsights(courseId: string | undefined) {
           .in('assignment_id', assignmentIds);
         if (sErr) throw sErr;
 
-        // 4. Attendance — paginated
         const attendance: { enrollment_id: string; status: string }[] = [];
         const PAGE_SIZE = 1000;
         let from = 0;
@@ -162,7 +158,6 @@ export function useCourseInsights(courseId: string | undefined) {
           from += PAGE_SIZE;
         }
 
-        // 4b. Predictions for this course
         const { data: predictionRows, error: pErr } = await supabase
           .from('predictions')
           .select('student_id, predicted_grade, risk_label, confidence')
@@ -172,24 +167,14 @@ export function useCourseInsights(courseId: string | undefined) {
           (predictionRows || []).map((p) => [p.student_id, p])
         );
 
-        console.log('[useCourseInsights] fetched:', {
-          enrollments: enrollments.length,
-          assignments: (assignments || []).length,
-          submissions: (submissions || []).length,
-          attendance: attendance.length,
-          predictions: predictionRows?.length ?? 0,
-        });
-
         if (cancelled) return;
 
-        // Build per-student score map
         const submissionsMap = new Map<string, Map<string, number>>();
         for (const s of submissions || []) {
           if (!submissionsMap.has(s.student_id)) submissionsMap.set(s.student_id, new Map());
           submissionsMap.get(s.student_id)!.set(s.assignment_id, Number(s.score));
         }
 
-        // Attendance per enrollment
         const attMap = new Map<string, { present: number; total: number }>();
         for (const a of attendance) {
           const b = attMap.get(a.enrollment_id) ?? { present: 0, total: 0 };
@@ -234,7 +219,6 @@ export function useCourseInsights(courseId: string | undefined) {
           };
         });
 
-        // Distribution
         const buckets = [
           { bucket: 'F (0–59)', min: 0, max: 60 },
           { bucket: 'D (60–69)', min: 60, max: 70 },
@@ -250,12 +234,6 @@ export function useCourseInsights(courseId: string | undefined) {
         const classAverage = students.reduce((s, x) => s + x.weightedAverage, 0) / students.length;
         const averageAttendance = students.reduce((s, x) => s + x.attendanceRate, 0) / students.length;
         const atRiskCount = students.filter((s) => s.weightedAverage < 60 || s.trend < -3).length;
-
-        console.log('[useCourseInsights] setting insights:', {
-          studentsCount: students.length,
-          classAverage,
-          averageAttendance,
-        });
 
         if (!cancelled) setInsights({
           courseId: courseId!,

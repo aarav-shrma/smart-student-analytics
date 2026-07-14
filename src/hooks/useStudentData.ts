@@ -10,20 +10,23 @@ export type CourseGrade = {
   attendanceRate: number;
   assignmentsGraded: number;
   assignmentsTotal: number;
+  predictedGrade: number | null;
+  riskLabel: 'low' | 'medium' | 'high' | null;
+  confidence: number | null;
 };
 
 export type TrajectoryPoint = {
-  date: string;         // ISO date
-  dateLabel: string;    // "Apr 15"
+  date: string;
+  dateLabel: string;
   courseCode: string;
   score: number;
   assignmentTitle: string;
 };
 
 export type StudentSummary = {
-  gpa: number;              // weighted avg across all courses
-  overallAttendance: number; // %
-  coursesAtRisk: number;    // courses with weightedAverage < 60
+  gpa: number;
+  overallAttendance: number;
+  coursesAtRisk: number;
   totalCourses: number;
 };
 
@@ -51,7 +54,7 @@ export function useStudentData(studentId: string | undefined) {
       setError(null);
 
       try {
-        // 1. Get enrollments + course info
+        // 1. Enrollments + course info
         const { data: enrollments, error: enrollErr } = await supabase
           .from('enrollments')
           .select('id, course_id, courses(id, code, name)')
@@ -70,14 +73,14 @@ export function useStudentData(studentId: string | undefined) {
         const courseIds = enrollments.map((e) => e.course_id);
         const enrollmentIds = enrollments.map((e) => e.id);
 
-        // 2. Get all assignments for those courses
+        // 2. Assignments
         const { data: assignments, error: aErr } = await supabase
           .from('assignments')
           .select('id, course_id, title, weight, max_score, due_at')
           .in('course_id', courseIds);
         if (aErr) throw aErr;
 
-        // 3. Get this student's submissions for those assignments
+        // 3. Submissions
         const assignmentIds = (assignments || []).map((a) => a.id);
         const { data: submissions, error: sErr } = await supabase
           .from('submissions')
@@ -86,12 +89,23 @@ export function useStudentData(studentId: string | undefined) {
           .in('assignment_id', assignmentIds);
         if (sErr) throw sErr;
 
-        // 4. Get attendance for this student's enrollments
+        // 4. Attendance
         const { data: attendance, error: attErr } = await supabase
           .from('attendance')
           .select('enrollment_id, status')
           .in('enrollment_id', enrollmentIds);
         if (attErr) throw attErr;
+
+        // 5. Predictions for this student
+        const { data: predictionRows, error: pErr } = await supabase
+          .from('predictions')
+          .select('course_id, predicted_grade, risk_label, confidence')
+          .eq('student_id', studentId)
+          .in('course_id', courseIds);
+        if (pErr) throw pErr;
+        const predictionsByCourse = new Map(
+          (predictionRows || []).map((p) => [p.course_id, p])
+        );
 
         if (cancelled) return;
 
@@ -126,6 +140,7 @@ export function useStudentData(studentId: string | undefined) {
           const att = attendanceByEnrollment.get(enrollment.id) ?? { present: 0, total: 0 };
           const attendanceRate = att.total > 0 ? (att.present / att.total) * 100 : 0;
 
+          const prediction = predictionsByCourse.get(course.id);
           return {
             course_id: course.id,
             code: course.code,
@@ -135,10 +150,13 @@ export function useStudentData(studentId: string | undefined) {
             attendanceRate: Math.round(attendanceRate * 10) / 10,
             assignmentsGraded: graded,
             assignmentsTotal: courseAssignments.length,
+            predictedGrade: prediction ? Number(prediction.predicted_grade) : null,
+            riskLabel: prediction ? (prediction.risk_label as 'low' | 'medium' | 'high') : null,
+            confidence: prediction ? Number(prediction.confidence) : null,
           };
         });
 
-        // ----- Trajectory: every submission plotted by due date -----
+        // ----- Trajectory -----
         const courseCodeById = new Map(enrollments.map((e) => [
           e.course_id,
           (e.courses as unknown as { code: string }).code,

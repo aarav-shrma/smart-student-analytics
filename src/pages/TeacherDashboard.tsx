@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../hooks/useAuth';
-import { useTeacherCourses, useCourseInsights } from '../hooks/useTeacherData';
+import { useTeacherCourses, useCourseInsights, refreshPredictions } from '../hooks/useTeacherData';
 import StatCard from '../components/StatCard';
 import DistributionChart from '../components/DistributionChart';
 import AtRiskList from '../components/AtRiskList';
@@ -10,8 +10,9 @@ export default function TeacherDashboard() {
   const { profile, signOut } = useAuth();
   const { courses, loading: coursesLoading, error: coursesError } = useTeacherCourses(profile?.id);
   const [selectedCourseId, setSelectedCourseId] = useState<string | undefined>();
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshMsg, setRefreshMsg] = useState<string | null>(null);
   const { insights, loading: insightsLoading } = useCourseInsights(selectedCourseId);
-
   // Auto-select first course when loaded
   useEffect(() => {
   if (courses.length > 0 && !selectedCourseId) {
@@ -19,6 +20,23 @@ export default function TeacherDashboard() {
   }
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [courses.length]);
+
+async function handleRefresh() {
+  if (!selectedCourseId) return;
+  setRefreshing(true);
+  setRefreshMsg(null);
+  try {
+    const result = await refreshPredictions(selectedCourseId);
+    setRefreshMsg(
+      `Updated ${result.predictionsWritten} predictions (${result.summary?.high} high · ${result.summary?.medium} med · ${result.summary?.low} low)`
+    );
+    setTimeout(() => window.location.reload(), 800);
+  } catch (err: any) {
+    setRefreshMsg(`Error: ${err.message}`);
+  } finally {
+    setRefreshing(false);
+  }
+}
 
   const selectedCourse = courses.find((c) => c.id === selectedCourseId);
 
@@ -73,6 +91,16 @@ export default function TeacherDashboard() {
               <>
                 {/* KPIs */}
                 <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+                  <div className="mb-4 flex items-center gap-3">
+  <button
+    onClick={handleRefresh}
+    disabled={refreshing}
+    className="px-4 py-2 bg-emerald-600 text-white rounded-md text-sm font-medium hover:bg-emerald-700 disabled:opacity-50"
+  >
+    {refreshing ? 'Computing…' : 'Refresh Predictions'}
+  </button>
+  {refreshMsg && <span className="text-xs text-gray-600">{refreshMsg}</span>}
+</div>
                   <StatCard
                     label="Class Average"
                     value={`${insights.classAverage.toFixed(1)}%`}

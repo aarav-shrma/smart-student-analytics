@@ -8,6 +8,12 @@ const gradeColors: Record<string, string> = {
   F: 'text-red-600 bg-red-50',
 };
 
+const riskColors: Record<string, string> = {
+  high: 'bg-red-100 text-red-700',
+  medium: 'bg-amber-100 text-amber-700',
+  low: 'bg-emerald-100 text-emerald-700',
+};
+
 export default function CourseCard({ course }: { course: CourseGrade }) {
   const badgeClass = gradeColors[course.letterGrade] ?? 'text-gray-600 bg-gray-50';
   return (
@@ -34,6 +40,29 @@ export default function CourseCard({ course }: { course: CourseGrade }) {
       <p className="text-xs text-gray-500 mt-3">
         {course.assignmentsGraded} of {course.assignmentsTotal} assignments graded
       </p>
+
+      {course.predictedGrade != null && (
+        <div className="mt-3 pt-3 border-t border-gray-100">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs text-gray-500">Predicted Final</p>
+              <p className="text-sm font-semibold text-gray-900">
+                {course.predictedGrade.toFixed(1)}%
+                {course.confidence != null && (
+                  <span className="ml-2 text-xs text-gray-500 font-normal">
+                    · {Math.round(course.confidence * 100)}% confidence
+                  </span>
+                )}
+              </p>
+            </div>
+            {course.riskLabel && (
+              <span className={`text-xs px-2 py-1 rounded-full font-medium ${riskColors[course.riskLabel]}`}>
+                {course.riskLabel} risk
+              </span>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

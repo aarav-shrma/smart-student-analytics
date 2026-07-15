@@ -25,7 +25,7 @@ export default function TrajectoryChart({ points }: { points: TrajectoryPoint[] 
           <Tooltip
             contentStyle={{ fontSize: 12, borderRadius: 6 }}
             labelFormatter={(label) => `Due: ${label}`}
-            formatter={(value: number, _name, entry: any) => [
+            formatter={(value, _name, entry: any) => [
               `${value}% (${entry.payload.courseCode} — ${entry.payload.assignmentTitle})`,
               'Score',
             ]}

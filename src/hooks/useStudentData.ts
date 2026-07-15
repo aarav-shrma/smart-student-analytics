@@ -47,6 +47,7 @@ export function useStudentData(studentId: string | undefined) {
 
   useEffect(() => {
     if (!studentId) return;
+    const sid: string = studentId;
     let cancelled = false;
 
     async function load() {
@@ -54,11 +55,10 @@ export function useStudentData(studentId: string | undefined) {
       setError(null);
 
       try {
-        // 1. Enrollments + course info
         const { data: enrollments, error: enrollErr } = await supabase
           .from('enrollments')
           .select('id, course_id, courses(id, code, name)')
-          .eq('student_id', studentId);
+          .eq('student_id', sid);
         if (enrollErr) throw enrollErr;
         if (!enrollments || enrollments.length === 0) {
           if (!cancelled) {
@@ -73,34 +73,30 @@ export function useStudentData(studentId: string | undefined) {
         const courseIds = enrollments.map((e) => e.course_id);
         const enrollmentIds = enrollments.map((e) => e.id);
 
-        // 2. Assignments
         const { data: assignments, error: aErr } = await supabase
           .from('assignments')
           .select('id, course_id, title, weight, max_score, due_at')
           .in('course_id', courseIds);
         if (aErr) throw aErr;
 
-        // 3. Submissions
         const assignmentIds = (assignments || []).map((a) => a.id);
         const { data: submissions, error: sErr } = await supabase
           .from('submissions')
           .select('assignment_id, score')
-          .eq('student_id', studentId)
+          .eq('student_id', sid)
           .in('assignment_id', assignmentIds);
         if (sErr) throw sErr;
 
-        // 4. Attendance
         const { data: attendance, error: attErr } = await supabase
           .from('attendance')
           .select('enrollment_id, status')
           .in('enrollment_id', enrollmentIds);
         if (attErr) throw attErr;
 
-        // 5. Predictions for this student
         const { data: predictionRows, error: pErr } = await supabase
           .from('predictions')
           .select('course_id, predicted_grade, risk_label, confidence')
-          .eq('student_id', studentId)
+          .eq('student_id', sid)
           .in('course_id', courseIds);
         if (pErr) throw pErr;
         const predictionsByCourse = new Map(
@@ -109,7 +105,6 @@ export function useStudentData(studentId: string | undefined) {
 
         if (cancelled) return;
 
-        // ----- Compute course grades -----
         const submissionsByAssignment = new Map((submissions || []).map((s) => [s.assignment_id, s.score]));
         const attendanceByEnrollment = new Map<string, { present: number; total: number }>();
         for (const a of attendance || []) {
@@ -156,7 +151,6 @@ export function useStudentData(studentId: string | undefined) {
           };
         });
 
-        // ----- Trajectory -----
         const courseCodeById = new Map(enrollments.map((e) => [
           e.course_id,
           (e.courses as unknown as { code: string }).code,
@@ -176,7 +170,6 @@ export function useStudentData(studentId: string | undefined) {
         }
         points.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
-        // ----- Summary -----
         const gpaWeightSum = grades.reduce((sum, g) => sum + g.weightedAverage, 0);
         const gpa = grades.length > 0 ? gpaWeightSum / grades.length : 0;
         const attTotal = grades.reduce((sum, g) => sum + g.attendanceRate, 0);

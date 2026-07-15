@@ -60,6 +60,7 @@ export function useTeacherCourses(teacherId: string | undefined) {
 
   useEffect(() => {
     if (!teacherId) return;
+    const tid: string = teacherId;
     let cancelled = false;
 
     async function load() {
@@ -68,7 +69,7 @@ export function useTeacherCourses(teacherId: string | undefined) {
         const { data: courseRows, error: cErr } = await supabase
           .from('courses')
           .select('id, code, name, term')
-          .eq('teacher_id', teacherId);
+          .eq('teacher_id', tid);
         if (cErr) throw cErr;
 
         const withCounts: TeacherCourse[] = [];
@@ -104,6 +105,7 @@ export function useCourseInsights(courseId: string | undefined) {
 
   useEffect(() => {
     if (!courseId) return;
+    const cid: string = courseId;
     let cancelled = false;
 
     async function load() {
@@ -114,11 +116,11 @@ export function useCourseInsights(courseId: string | undefined) {
         const { data: enrollments, error: eErr } = await supabase
           .from('enrollments')
           .select('id, student_id, profiles(full_name)')
-          .eq('course_id', courseId);
+          .eq('course_id', cid);
         if (eErr) throw eErr;
         if (!enrollments || enrollments.length === 0) {
           if (!cancelled) setInsights({
-            courseId: courseId!, students: [], distribution: [],
+            courseId: cid, students: [], distribution: [],
             atRiskCount: 0, classAverage: 0, averageAttendance: 0,
           });
           return;
@@ -127,7 +129,7 @@ export function useCourseInsights(courseId: string | undefined) {
         const { data: assignments, error: aErr } = await supabase
           .from('assignments')
           .select('id, weight, max_score, due_at')
-          .eq('course_id', courseId)
+          .eq('course_id', cid)
           .order('due_at', { ascending: true });
         if (aErr) throw aErr;
 
@@ -161,7 +163,7 @@ export function useCourseInsights(courseId: string | undefined) {
         const { data: predictionRows, error: pErr } = await supabase
           .from('predictions')
           .select('student_id, predicted_grade, risk_label, confidence')
-          .eq('course_id', courseId);
+          .eq('course_id', cid);
         if (pErr) throw pErr;
         const predictionsByStudent = new Map(
           (predictionRows || []).map((p) => [p.student_id, p])
@@ -236,7 +238,7 @@ export function useCourseInsights(courseId: string | undefined) {
         const atRiskCount = students.filter((s) => s.weightedAverage < 60 || s.trend < -3).length;
 
         if (!cancelled) setInsights({
-          courseId: courseId!,
+          courseId: cid,
           students,
           distribution,
           atRiskCount,
